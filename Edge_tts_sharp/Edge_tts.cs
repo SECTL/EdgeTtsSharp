@@ -86,14 +86,28 @@ public class EdgeTts
     /// </summary>
     /// <param name="option">播放参数</param>
     /// <param name="voice">音源参数</param>
-    public static void Invoke(PlayOption option, eVoice voice, Action<List<byte>> callback, IProgress<List<byte>> progress = null)
+    public static void Invoke(
+        PlayOption option,
+        eVoice voice,
+        Action<List<byte>> callback,
+        IProgress<List<byte>> progress = null,
+        Action<Exception> errorCallback = null,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var binary_delim = "Path:audio\r\n";
         var sendRequestId = GetGUID();
         var binary = new List<byte>();
-        bool IsTurnEnd = false;
+        var isCompleted = 0;
+        void CompleteError(Exception exception)
+        {
+            if (Interlocked.Exchange(ref isCompleted, 1) == 0)
+                errorCallback?.Invoke(exception);
+        }
 
-        var wss = new Wss($"wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&Sec-MS-GEC={GenerateSecMsGecToken()}&Sec-MS-GEC-Version=1-130.0.2849.68");
+        var wss = new Wss(
+            $"wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&Sec-MS-GEC={GenerateSecMsGecToken()}&Sec-MS-GEC-Version=1-130.0.2849.68",
+            cancellationToken);
         wss.OnMessage += (sender, e) =>
         {
             if (e.IsText)
@@ -109,11 +123,12 @@ public class EdgeTts
                     // 返回内容
                     if (binary.Count > 0)
                     {
-                        callback?.Invoke(binary);
+                        if (Interlocked.Exchange(ref isCompleted, 1) == 0)
+                            callback?.Invoke(binary);
                     }
                     else
                     {
-                        throw new Exception("返回值为空！");
+                        CompleteError(new Exception("返回值为空！"));
                     }
                     // end of turn, close stream. 结束信号，可主动关闭socket
                     // 音频发送完毕后，最后还会收到一个表示音频结束的文本信息
@@ -128,7 +143,6 @@ public class EdgeTts
                     // 未知错误，通常不会发生
                 }
                 if (Debug) Console.WriteLine(e.Data);
-                IsTurnEnd = true;
             }
             else if (e.IsBinary)
             {
@@ -154,17 +168,24 @@ public class EdgeTts
             {
                 File.WriteAllBytes(option.SavePath, binary.ToArray());
             }
+            CompleteError(new InvalidOperationException("Edge TTS 连接在返回音频前关闭。"));
         };
         wss.OnLog += (onmsg) =>
         {
             if(Debug) Console.WriteLine($"[{onmsg.level.ToString()}] {onmsg.msg}");
+            if (onmsg.level == level.error)
+                CompleteError(new InvalidOperationException(onmsg.msg));
         };
         if (wss.Run())
         {
             wss.Send(ConvertToAudioFormatWebSocketString(voice.SuggestedCodec));
             wss.Send(ConvertToSsmlWebSocketString(sendRequestId, voice.Locale, voice.Name, option.Rate, ((int)option.Volume * 100), option.Text));
         }
-        while (Await && !IsTurnEnd)
+        else
+        {
+            CompleteError(new InvalidOperationException("无法连接到 Edge TTS 服务。"));
+        }
+        while (Await && Volatile.Read(ref isCompleted) == 0)
         {
             Thread.Sleep(10);
         }
