@@ -1,4 +1,4 @@
-﻿using Edge_tts_sharp.Model;
+using Edge_tts_sharp.Model;
 using System;
 using System.Resources;
 using System.Collections.Generic;
@@ -6,7 +6,6 @@ using System.IO;
 using System.Linq;
 using System.Net.WebSockets;
 using System.Reflection;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -29,15 +28,23 @@ public class EdgeTts
     public static bool Await = false;
     
 
-    private static string GenerateSecMsGecToken()
+    /// <summary>
+    /// 构造一次合成请求的 WebSocket 地址。
+    /// </summary>
+    /// <remarks>
+    /// 微软的 readaloud 接口只接受"当前五分钟窗口 + v2 令牌"，所以这里每次调用都重新取令牌，
+    /// 而不是复用某个进程级常量；令牌算法见 <see cref="EdgeTtsGecToken"/>。
+    /// 宿主可以在这条地址上再追加自己的查询参数（例如 SecRandom 的兼容层会补 ConnectionId）。
+    /// </remarks>
+    /// <returns>带 <c>Sec-MS-GEC</c> 与 <c>Sec-MS-GEC-Version</c> 的 wss 地址。</returns>
+    public static string CreateSynthesisUri()
     {
-        // 来自 https://github.com/rany2/edge-tts/issues/290#issuecomment-2464956570
-        var ticks = DateTime.Now.ToFileTimeUtc();
-        ticks -= ticks % 3_000_000_000;
-        var str = ticks + "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-        return Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(str)));
+        return "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1"
+               + "?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4"
+               + $"&Sec-MS-GEC={EdgeTtsGecToken.Create(DateTimeOffset.UtcNow)}"
+               + $"&Sec-MS-GEC-Version={EdgeTtsGecToken.SecMsGecVersion}";
     }
-    
+
     static string GetGUID()
     {
         return Guid.NewGuid().ToString().Replace("-","");
@@ -105,9 +112,7 @@ public class EdgeTts
                 errorCallback?.Invoke(exception);
         }
 
-        var wss = new Wss(
-            $"wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4&Sec-MS-GEC={GenerateSecMsGecToken()}&Sec-MS-GEC-Version=1-130.0.2849.68",
-            cancellationToken);
+        var wss = new Wss(CreateSynthesisUri(), cancellationToken);
         wss.OnMessage += (sender, e) =>
         {
             if (e.IsText)

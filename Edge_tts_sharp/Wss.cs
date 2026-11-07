@@ -1,7 +1,8 @@
-﻿using Edge_tts_sharp.Model;
+using Edge_tts_sharp.Model;
 using System;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using WebSocketSharp;
 
 namespace Edge_tts_sharp
@@ -20,10 +21,14 @@ namespace Edge_tts_sharp
         public event EventHandler<MessageEventArgs> OnMessage;
         public event EventHandler<CloseEventArgs> OnColse;
         public string wssAddress { get; set; }
-        public Wss(string url)
+
+        private readonly CancellationToken _cancellationToken;
+
+        public Wss(string url, CancellationToken cancellationToken = default)
         {
             try
             {
+                _cancellationToken = cancellationToken;
                 wssAddress = url;
                 wss = new WebSocket(wssAddress);
                 var sslProtocolHack = (System.Security.Authentication.SslProtocols)(SslProtocolsHack.Tls12 | SslProtocolsHack.Tls11 | SslProtocolsHack.Tls);
@@ -60,6 +65,7 @@ namespace Edge_tts_sharp
         }
         public bool Run()
         {
+            _cancellationToken.ThrowIfCancellationRequested();
             wss.Connect();
             if (wss.IsAlive)
             {

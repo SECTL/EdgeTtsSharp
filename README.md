@@ -13,6 +13,17 @@ NuGet\Install-Package Edge_tts_sharp
 | Edge_tts.Debug | 调试模式，为true则显示日志 |
 | Edge_tts.Await | 同步模式，为true会等待函数执行完毕 | 
 
+### Sec-MS-GEC 令牌
+微软的 readaloud 接口只接受"当前五分钟窗口 + v2 令牌"（`<16 位 CS64>-<64 位摘要>`），并与
+`Sec-MS-GEC-Version=2-<Chromium 版本>` 配对；旧的"直接 SHA-256"令牌会被 403 拒绝。
+
+- 令牌由 `EdgeTtsGecToken.Create(DateTimeOffset utcNow)` 生成，`EdgeTts.CreateSynthesisUri()` 每次调用都会
+  取一个新令牌。摘要算法与 [edge-tts](https://github.com/rany2/edge-tts) 的 `drm.py` 保持一致，
+  **不能**换成 `SHA256.HashData`。
+- 令牌只依赖本机时钟（五分钟窗口），系统时间偏差超过一个窗口时同样会被拒绝。
+- 自定义 `Wss` 接缝时，请从 `EdgeTts.CreateSynthesisUri()` 取地址，或自行保留
+  `Sec-MS-GEC`/`Sec-MS-GEC-Version` 参数。
+
 ### Invoke/PlayText/SaveAudio方法
 | 参数 | 说明 |
 | --- | --- |
